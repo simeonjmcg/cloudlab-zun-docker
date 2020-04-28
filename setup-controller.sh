@@ -2126,16 +2126,16 @@ if [ -z "${DASHBOARD_DONE}" ]; then
 
     maybe_install_packages openstack-dashboard apache2
     if [ $ISPYTHON3 -eq 1 ]; then
-	maybe_install_packages libapache2-mod-wsgi-py3
+	maybe_install_packages libapache2-mod-wsgi-py3 python3-pip
     else
 	maybe_install_packages libapache2-mod-wsgi
     fi
 
 	# Install zun ui
-	git clone https://github.com/openstack/zun-ui -o $PATHNAME/zun-ui
-	cd $PATHNAME/zun-ui
+	git clone https://github.com/openstack/zun-ui -o $OURDIR/zun-ui
+	cd $OURDIR/zun-ui
 	pip3 install .
-	cp $PATHNAME/zun_ui/enabled/* /usr/share/openstack-dashboard/openstack_dashboard/local/enabled/
+	cp $OURDIR/zun_ui/enabled/* /usr/share/openstack-dashboard/openstack_dashboard/local/enabled/
 
 	$PYTHONBINNAME /usr/share/openstack-dashboard/manage.py collectstatic --noinput
 	$PYTHONBINNAME /usr/share/openstack-dashboard/manage.py compress
