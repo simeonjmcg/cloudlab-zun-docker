@@ -1473,8 +1473,18 @@ if [ -z "${ZUN_DBPASS}" ]; then
 	__openstack endpoint create --region $REGION \
 	container admin http://${CONTROLLER}:9517/v1
 
-	# Install necessary packages
-	maybe_install_packages python3-pip git
+	# Create zun user
+	groupadd --system zun
+	useradd --home-dir "/var/lib/zun" \
+		--create-home \
+		--system \
+		--shell /bin/false \
+		-g zun \
+		zun
+
+	# Create directories
+	mkdir -p /etc/zun
+	chown zun:zun /etc/zun
 
 	# clone and install zun
 	cd /var/lib/zun
