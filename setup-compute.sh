@@ -557,11 +557,11 @@ crudini --set /etc/zun/zun.conf keystone_authtoken \
 crudini --set /etc/zun/zun.conf keystone_authtoken \
     password "$ZUN_PASS"
 crudini --set /etc/zun/zun.conf keystone_authtoken \
-    zun
+    username zun
 crudini --set /etc/zun/zun.conf keystone_authtoken \
     auth_url http://$CONTROLLER:5000
 crudini --set /etc/zun/zun.conf keystone_authtoken \
-    password
+    auth_type password
 
 crudini --set /etc/zun/zun.conf oslo_concurrency \
     lock_path /var/lib/zun/tmp
@@ -585,11 +585,15 @@ EOF
 
 # restart docker
 systemctl daemon-reload
+service_restart docker
 
 # configure containerd
 containerd config default > /etc/containerd/config.toml
 sed -i 's/gid \?=.*/gid = '$(getent group zun | cut -d: -f3)'/' /etc/containerd/config.toml
 chown zun:zun /etc/containerd/config.toml
+
+# restart containerd
+service_restart containerd
 
 # configure CNI
 mkdir -p /opt/cni/bin
@@ -599,7 +603,7 @@ install -o zun -m 0555 -D /usr/local/bin/zun-cni /opt/cni/bin/zun-cni
 
 # Create upstart config for zun
 cat <<EOF >/etc/systemd/system/zun-compute.service
-echo "[Unit]
+[Unit]
 Description = OpenStack Container Service Compute Agent
 
 [Service]
@@ -612,7 +616,7 @@ EOF
 
 # Create upstart config for zun cni daemon
 cat <<EOF >/etc/systemd/system/zun-cni-daemon.service
-echo "[Unit]
+[Unit]
 Description = OpenStack Container Service CNI daemon
 
 [Service]
@@ -622,9 +626,6 @@ User = zun
 [Install]
 WantedBy = multi-user.target
 EOF
-
-# restart containerd
-service_restart containerd
 
 # Enable and start zun
 service_enable zun-compute
