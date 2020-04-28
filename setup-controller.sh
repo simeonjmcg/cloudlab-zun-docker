@@ -1450,6 +1450,182 @@ if [ -z "${NOVA_COMPUTENODES_DONE}" ]; then
 fi
 
 #
+# Install zun service
+#
+if [ -z "${ZUN_DBPASS}" ]; then
+    logtstart "zun"
+    ZUN_DBPASS=`$PSWDGEN`
+    ZUN_PASS=`$PSWDGEN`
+
+	echo "create database zun" | mysql -u root --password="$DB_ROOT_PASS"
+	echo "grant all privileges on zun.* to 'zun'@'localhost' identified by '$ZUN_DBPASS'" | mysql -u root --password="$DB_ROOT_PASS"
+	echo "grant all privileges on zun.* to 'zun'@'%' identified by '$ZUN_DBPASS'" | mysql -u root --password="$DB_ROOT_PASS"
+
+	__openstack user create $DOMARG --password $ZUN_PASS zun
+	__openstack role add --user zun --project service admin
+	__openstack service create --name zun \
+	    --description "OpenStack Container Service" container
+
+	__openstack endpoint create --region $REGION \
+	container public http://${CONTROLLER}:9517/v1
+	__openstack endpoint create --region $REGION \
+	container internal http://${CONTROLLER}:9517/v1
+	__openstack endpoint create --region $REGION \
+	container admin http://${CONTROLLER}:9517/v1
+
+	# Install necessary packages
+	maybe_install_packages python3-pip git
+
+	# clone and install zun
+	cd /var/lib/zun
+	git clone https://opendev.org/openstack/zun.git
+	chown -R zun:zun zun
+	cd zun
+	pip3 install -r requirements.txt
+	python3 setup.py install
+
+	# Generate sample config
+	su -s /bin/sh -c "oslo-config-generator \
+		--config-file etc/zun/zun-config-generator.conf" zun
+	su -s /bin/sh -c "cp etc/zun/zun.conf.sample \
+		/etc/zun/zun.conf" zun
+
+	# Copy api-paste
+	su -s /bin/sh -c "cp etc/zun/api-paste.ini /etc/zun" zun
+
+	crudini --set /etc/zun/zun.conf DEFAULT \
+		transport_url $RABBIT_URL
+
+	crudini --set /etc/zun/zun.conf api \
+		host_ip $MGMTIP
+	crudini --set /etc/zun/zun.conf api \
+		port 9517
+
+	crudini --set /etc/zun/zun.conf database \
+		connection "mysql+pymysql://zun:$ZUN_DBPASS@$CONTROLLER/zun"
+
+	crudini --set /etc/zun/zun.conf keystone_auth \
+		memcached_servers $CONTROLLER:11211
+	crudini --set /etc/zun/zun.conf keystone_auth \
+		www_authenticate_uri http://$CONTROLLER:5000
+	crudini --set /etc/zun/zun.conf keystone_auth \
+		project_domain_name default
+	crudini --set /etc/zun/zun.conf keystone_auth \
+		project_name service
+	crudini --set /etc/zun/zun.conf keystone_auth \
+		user_domain_name default
+	crudini --set /etc/zun/zun.conf keystone_auth \
+		password "$ZUN_PASS"
+	crudini --set /etc/zun/zun.conf keystone_auth \
+		username zun
+	crudini --set /etc/zun/zun.conf keystone_auth \
+		auth_url http://$CONTROLLER:5000
+	crudini --set /etc/zun/zun.conf keystone_auth \
+		auth_type password
+	crudini --set /etc/zun/zun.conf keystone_auth \
+		auth_version v3
+	crudini --set /etc/zun/zun.conf keystone_auth \
+		auth_protocol http
+	crudini --set /etc/zun/zun.conf keystone_auth \
+		service_token_roles_required True
+	crudini --set /etc/zun/zun.conf keystone_auth \
+		endpoint_type internalURL
+
+	crudini --set /etc/zun/zun.conf keystone_authtoken \
+		memcached_servers $CONTROLLER:11211
+	crudini --set /etc/zun/zun.conf keystone_authtoken \
+		www_authenticate_uri http://$CONTROLLER:5000
+	crudini --set /etc/zun/zun.conf keystone_authtoken \
+		project_domain_name default
+	crudini --set /etc/zun/zun.conf keystone_authtoken \
+		project_name service
+	crudini --set /etc/zun/zun.conf keystone_authtoken \
+		user_domain_name default
+	crudini --set /etc/zun/zun.conf keystone_authtoken \
+		password "$ZUN_PASS"
+	crudini --set /etc/zun/zun.conf keystone_authtoken \
+		username zun
+	crudini --set /etc/zun/zun.conf keystone_authtoken \
+		auth_url http://$CONTROLLER:5000
+	crudini --set /etc/zun/zun.conf keystone_authtoken \
+		auth_type password
+	crudini --set /etc/zun/zun.conf keystone_authtoken \
+		auth_version v3
+	crudini --set /etc/zun/zun.conf keystone_authtoken \
+		auth_protocol http
+	crudini --set /etc/zun/zun.conf keystone_authtoken \
+		service_token_roles_required True
+	crudini --set /etc/zun/zun.conf keystone_authtoken \
+		endpoint_type internalURL
+
+	crudini --set /etc/zun/zun.conf oslo_concurrency \
+		lock_path /var/lib/zun/tmp
+	crudini --set /etc/zun/zun.conf oslo_messaging_notifications \
+		driver messaging
+
+	crudini --set /etc/zun/zun.conf websocket_proxy \
+		wsproxy_host $MGMTIP
+	crudini --set /etc/zun/zun.conf websocket_proxy \
+		wsproxy_port 6784
+	crudini --set /etc/zun/zun.conf websocket_proxy \
+		base_url ws://$CONTROLLER:6784/
+
+	# Set owner to zun
+	chown zun:zun /etc/zun/zun.conf
+
+	# Populate zun database
+	su -s /bin/sh -c "zun-db-manage upgrade" zun
+
+	# Create upstart config for zun api
+	cat <<EOF >/etc/systemd/system/zun-api.service
+[Unit]
+Description = OpenStack Container Service API
+
+[Service]
+ExecStart = /usr/local/bin/zun-api
+User = zun
+
+[Install]
+WantedBy = multi-user.target
+EOF
+
+	# Create upstart config for zun wsproxy
+	cat <<EOF >/etc/systemd/system/zun-wsproxy.service
+[Unit]
+Description = OpenStack Container Service Websocket Proxy
+
+[Service]
+ExecStart = /usr/local/bin/zun-wsproxy
+User = zun
+
+[Install]
+WantedBy = multi-user.target
+EOF
+
+	# Enable and start zun api
+	service_enable zun-api
+	service_restart zun-api
+
+	# Enable and start zun wsproxy
+	service_enable zun-wsproxy
+	service_restart zun-wsproxy
+
+	#
+	# Install kuryr
+	#
+
+    KURYR_PASS=`$PSWDGEN`
+	# create openstack user for kuryr, add as admin
+	openstack user create --domain default --password $KURYR_PASS kuryr
+	openstack role add --project service --user kuryr admin
+
+	echo "ZUN_DBPASS=\"${ZUN_DBPASS}\"" >> $SETTINGS
+	echo "ZUN_PASS=\"${ZUN_PASS}\"" >> $SETTINGS
+	echo "KURYR_PASS=\"${KURYR_PASS}\"" >> $SETTINGS
+    logtend "zun"
+fi
+
+#
 # Install the Network service on the controller
 #
 if [ -z "${NEUTRON_DBPASS}" ]; then

@@ -40,6 +40,7 @@ if [ $OSVERSION -ge $OSKILO ]; then
     patch -d / -p0 < $DIRNAME/etc/oslo_service-liberty-sig-MAINLOOP.patch
 fi
 
+maybe_install_packages python3-pip git
 maybe_install_packages nova-compute sysfsutils
 maybe_install_packages libguestfs-tools libguestfs0 python-guestfs
 
@@ -382,6 +383,252 @@ service_restart nova-compute
 service_enable nova-compute
 service_restart libvirt-bin
 service_enable libvirt-bin
+
+#
+# Install kuryr zun compute
+#
+
+# Creating kuryr user
+groupadd --system kuryr
+useradd --home-dir "/var/lib/kuryr" \
+      --create-home \
+      --system \
+      --shell /bin/false \
+      -g kuryr \
+      kuryr
+
+# Creating kuryr directories
+mkdir -p /etc/kuryr
+chown kuryr:kuryr /etc/kuryr
+
+# Cloning and installing kuryr-libnetwork
+apt-get install -y python3-pip
+cd /var/lib/kuryr
+git clone -b master https://git.openstack.org/openstack/kuryr-libnetwork.git
+chown -R kuryr:kuryr kuryr-libnetwork
+cd kuryr-libnetwork
+pip3 install -r requirements.txt
+python3 setup.py install
+
+# Generating sample config
+su -s /bin/sh -c "./tools/generate_config_file_samples.sh" kuryr
+su -s /bin/sh -c "cp etc/kuryr.conf.sample \
+      /etc/kuryr/kuryr.conf" kuryr
+
+# Write config
+crudini --set /etc/kuryr/kuryr.conf DEFAULT \
+    bindir /usr/local/libexec/kuryr
+crudini --set /etc/kuryr/kuryr.conf DEFAULT \
+    capability_scope global
+crudini --set /etc/kuryr/kuryr.conf DEFAULT \
+    process_external_connectivity False
+
+crudini --set /etc/kuryr/kuryr.conf neutron \
+    www_authenticate_uri http://$CONTROLLER:5000
+crudini --set /etc/kuryr/kuryr.conf neutron \
+    auth_url http://$CONTROLLER:5000
+crudini --set /etc/kuryr/kuryr.conf neutron \
+    username kuryr
+crudini --set /etc/kuryr/kuryr.conf neutron \
+    user_domain_name default
+crudini --set /etc/kuryr/kuryr.conf neutron \
+    password "$KURYR_PASS"
+crudini --set /etc/kuryr/kuryr.conf neutron \
+    project_name service
+crudini --set /etc/kuryr/kuryr.conf neutron \
+    project_domain_name default
+crudini --set /etc/kuryr/kuryr.conf neutron \
+    auth_type password
+
+# Create service
+cat <<EOF >etc/systemd/system/kuryr-libnetwork.service
+[Unit]
+Description = Kuryr-libnetwork - Docker network plugin for Neutron
+
+[Service]
+ExecStart = /usr/local/bin/kuryr-server --config-file /etc/kuryr/kuryr.conf
+CapabilityBoundingSet = CAP_NET_ADMIN
+
+[Install]
+WantedBy = multi-user.target
+EOF
+
+# Enable and start service
+service_enable kuryr-libnetwork
+service_restart kuryr-libnetwork
+
+# Restart docker
+service_restart docker
+
+# Create zun User
+groupadd --system zun
+useradd --home-dir "/var/lib/zun" \
+      --create-home \
+      --system \
+      --shell /bin/false \
+      -g zun \
+      zun
+
+# Create directories
+mkdir -p /etc/zun
+chown zun:zun /etc/zun
+
+# Create CNI Directories
+mkdir -p /etc/cni/net.d
+chown zun:zun /etc/cni/net.d
+
+# Install dependencies
+apt-get install -y python3-pip git numactl
+
+# Clone and install zun
+cd /var/lib/zun
+git clone https://opendev.org/openstack/zun.git
+chown -R zun:zun zun
+cd zun
+pip3 install -r requirements.txt
+python3 setup.py install
+
+# Generate a sample configuration file
+su -s /bin/sh -c "oslo-config-generator \
+    --config-file etc/zun/zun-config-generator.conf" zun
+su -s /bin/sh -c "cp etc/zun/zun.conf.sample \
+    /etc/zun/zun.conf" zun
+su -s /bin/sh -c "cp etc/zun/rootwrap.conf \
+    /etc/zun/rootwrap.conf" zun
+su -s /bin/sh -c "mkdir -p /etc/zun/rootwrap.d" zun
+su -s /bin/sh -c "cp etc/zun/rootwrap.d/* \
+    /etc/zun/rootwrap.d/" zun
+su -s /bin/sh -c "cp etc/cni/net.d/* /etc/cni/net.d/" zun
+
+# Configure sudoers for zun users
+echo "zun ALL=(root) NOPASSWD: /usr/local/bin/zun-rootwrap \
+    /etc/zun/rootwrap.conf *" | sudo tee /etc/sudoers.d/zun-rootwrap
+
+# Write config
+crudini --set /etc/zun/zun.conf DEFAULT \
+    transport_url $RABBIT_URL
+crudini --set /etc/zun/zun.conf DEFAULT \
+    state_path /var/lib
+
+crudini --set /etc/zun/zun.conf database \
+    connection "mysql+pymysql://zun:$ZUN_DBPASS@$CONTROLLER/zun"
+crudini --set /etc/zun/zun.conf database \
+    memcached_servers $CONTROLLER:11211
+
+crudini --set /etc/zun/zun.conf keystone_auth \
+    www_authenticate_uri http://$CONTROLLER:5000
+crudini --set /etc/zun/zun.conf keystone_auth \
+    project_domain_name default
+crudini --set /etc/zun/zun.conf keystone_auth \
+    project_name service
+crudini --set /etc/zun/zun.conf keystone_auth \
+    user_domain_name default
+crudini --set /etc/zun/zun.conf keystone_auth \
+    password "$ZUN_PASS"
+crudini --set /etc/zun/zun.conf keystone_auth \
+    username zun
+crudini --set /etc/zun/zun.conf keystone_auth \
+    auth_url http://$CONTROLLER:5000
+crudini --set /etc/zun/zun.conf keystone_auth \
+    auth_type password
+crudini --set /etc/zun/zun.conf keystone_auth \
+    auth_version v3
+crudini --set /etc/zun/zun.conf keystone_auth \
+    auth_protocol http
+crudini --set /etc/zun/zun.conf keystone_auth \
+    service_token_roles_required True
+crudini --set /etc/zun/zun.conf keystone_auth \
+    endpoint_type internalURL
+
+crudini --set /etc/zun/zun.conf keystone_authtoken \
+    memcached_servers $CONTROLLER:11211
+crudini --set /etc/zun/zun.conf keystone_authtoken \
+    www_authenticate_uri http://$CONTROLLER:500
+crudini --set /etc/zun/zun.conf keystone_authtoken \
+    project_domain_name default
+crudini --set /etc/zun/zun.conf keystone_authtoken \
+    project_name service
+crudini --set /etc/zun/zun.conf keystone_authtoken \
+    user_domain_name default
+crudini --set /etc/zun/zun.conf keystone_authtoken \
+    password "$ZUN_PASS"
+crudini --set /etc/zun/zun.conf keystone_authtoken \
+    zun
+crudini --set /etc/zun/zun.conf keystone_authtoken \
+    auth_url http://$CONTROLLER:5000
+crudini --set /etc/zun/zun.conf keystone_authtoken \
+    password
+
+crudini --set /etc/zun/zun.conf oslo_concurrency \
+    lock_path /var/lib/zun/tmp
+
+crudini --set /etc/zun/zun.conf compute \
+    host_shared_with_nova true
+
+# Set owner of config
+chown zun:zun /etc/zun/zun.conf
+
+# Get Node ID
+NODEID=`cat /var/emulab/boot/nickname | cut -d . -f 1`
+
+# Create docker service config
+mkdir -p /etc/systemd/system/docker.service.d
+cat <<EOF >/etc/systemd/system/docker.service.d/docker.conf
+[Service]
+ExecStart=
+ExecStart=/usr/bin/dockerd --group zun -H tcp://$NODEID:2375 -H unix:///var/run/docker.sock --cluster-store etcd://$CONTROLLER:2379
+EOF
+
+# restart docker
+systemctl daemon-reload
+
+# configure containerd
+containerd config default > /etc/containerd/config.toml
+sed -i 's/gid \?=.*/gid = '$(getent group zun | cut -d: -f3)'/' /etc/containerd/config.toml
+chown zun:zun /etc/containerd/config.toml
+
+# configure CNI
+mkdir -p /opt/cni/bin
+curl -L https://github.com/containernetworking/plugins/releases/download/v0.7.1/cni-plugins-amd64-v0.7.1.tgz \
+      | tar -C /opt/cni/bin -xzvf - ./loopback
+install -o zun -m 0555 -D /usr/local/bin/zun-cni /opt/cni/bin/zun-cni
+
+# Create upstart config for zun
+cat <<EOF >/etc/systemd/system/zun-compute.service
+echo "[Unit]
+Description = OpenStack Container Service Compute Agent
+
+[Service]
+ExecStart = /usr/local/bin/zun-compute
+User = zun
+
+[Install]
+WantedBy = multi-user.target
+EOF
+
+# Create upstart config for zun cni daemon
+cat <<EOF >/etc/systemd/system/zun-cni-daemon.service
+echo "[Unit]
+Description = OpenStack Container Service CNI daemon
+
+[Service]
+ExecStart = /usr/local/bin/zun-cni-daemon
+User = zun
+
+[Install]
+WantedBy = multi-user.target
+EOF
+
+# restart containerd
+service_restart containerd
+
+# Enable and start zun
+service_enable zun-compute
+service_restart zun-compute
+
+# Enable and start zun cni daemon
+service_enable zun-cni-daemon
+service_restart zun-cni-daemon
 
 # XXXX ???
 # rm -f /var/lib/nova/nova.sqlite
