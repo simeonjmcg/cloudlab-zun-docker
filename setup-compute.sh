@@ -388,6 +388,10 @@ service_enable libvirt-bin
 # Install kuryr zun compute
 #
 
+# Install Docker
+curl -fsSL https://get.docker.com -o $DIRNAME/get-docker.sh
+sh $DIRNAME/get-docker.sh
+
 # Creating kuryr user
 groupadd --system kuryr
 useradd --home-dir "/var/lib/kuryr" \
