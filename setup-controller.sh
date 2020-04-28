@@ -2133,14 +2133,18 @@ if [ -z "${DASHBOARD_DONE}" ]; then
 	maybe_install_packages libapache2-mod-wsgi
     fi
 
+	cwd=`pwd`
+	cd $OURDIR
 	# Install zun ui
-	git clone https://github.com/openstack/zun-ui -o $OURDIR/zun-ui
-	cd $OURDIR/zun-ui
+	git clone https://github.com/openstack/zun-ui
+	cd zun-ui
 	pip3 install .
-	cp $OURDIR/zun_ui/enabled/* /usr/share/openstack-dashboard/openstack_dashboard/local/enabled/
+	cp zun_ui/enabled/* /usr/share/openstack-dashboard/openstack_dashboard/local/enabled/
+	cd $cwd
 
 	$PYTHONBINNAME /usr/share/openstack-dashboard/manage.py collectstatic --noinput
 	$PYTHONBINNAME /usr/share/openstack-dashboard/manage.py compress
+
 
     echo "" >> /etc/openstack-dashboard/local_settings.py
     sed -i -e "s/OPENSTACK_HOST.*=.*\$/OPENSTACK_HOST = \"${CONTROLLER}\"/" \
