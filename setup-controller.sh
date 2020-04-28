@@ -1412,44 +1412,6 @@ EOF
 fi
 
 #
-# Install the Compute service on the compute nodes
-#
-PHOSTS=""
-mkdir -p $OURDIR/pssh.setup-compute.stdout $OURDIR/pssh.setup-compute.stderr
-
-if [ -z "${NOVA_COMPUTENODES_DONE}" ]; then
-    logtstart "nova-computenodes"
-    NOVA_COMPUTENODES_DONE=1
-
-    for node in $COMPUTENODES
-    do
-	fqdn=`getfqdn $node`
-
-	# Copy the latest settings (passwords, endpoints, whatever) over
-	scp -o StrictHostKeyChecking=no $SETTINGS admin-openrc.sh $fqdn:$OURDIR
-
-	PHOSTS="$PHOSTS -H $fqdn"
-    done
-
-    echo "*** Setting up Cmopute service on nodes: $PHOSTS"
-    $PSSH $PHOSTS -o $OURDIR/pssh.setup-compute.stdout \
-	-e $OURDIR/pssh.setup-compute.stderr $DIRNAME/setup-compute.sh
-
-    for node in $COMPUTENODES
-    do
-	touch $OURDIR/compute-done-${node}
-    done
-
-    if [ $OSVERSION -ge $OSOCATA ]; then
-	su -s /bin/sh -c "nova-manage cell_v2 discover_hosts --verbose" nova
-	crudini --set /etc/nova/nova.conf scheduler discover_hosts_in_cells_interval 300
-    fi
-
-    echo "NOVA_COMPUTENODES_DONE=\"${NOVA_COMPUTENODES_DONE}\"" >> $SETTINGS
-    logtend "nova-computenodes"
-fi
-
-#
 # Install zun service
 #
 if [ -z "${ZUN_DBPASS}" ]; then
@@ -1633,6 +1595,44 @@ EOF
 	echo "ZUN_PASS=\"${ZUN_PASS}\"" >> $SETTINGS
 	echo "KURYR_PASS=\"${KURYR_PASS}\"" >> $SETTINGS
     logtend "zun"
+fi
+
+#
+# Install the Compute service on the compute nodes
+#
+PHOSTS=""
+mkdir -p $OURDIR/pssh.setup-compute.stdout $OURDIR/pssh.setup-compute.stderr
+
+if [ -z "${NOVA_COMPUTENODES_DONE}" ]; then
+    logtstart "nova-computenodes"
+    NOVA_COMPUTENODES_DONE=1
+
+    for node in $COMPUTENODES
+    do
+	fqdn=`getfqdn $node`
+
+	# Copy the latest settings (passwords, endpoints, whatever) over
+	scp -o StrictHostKeyChecking=no $SETTINGS admin-openrc.sh $fqdn:$OURDIR
+
+	PHOSTS="$PHOSTS -H $fqdn"
+    done
+
+    echo "*** Setting up Cmopute service on nodes: $PHOSTS"
+    $PSSH $PHOSTS -o $OURDIR/pssh.setup-compute.stdout \
+	-e $OURDIR/pssh.setup-compute.stderr $DIRNAME/setup-compute.sh
+
+    for node in $COMPUTENODES
+    do
+	touch $OURDIR/compute-done-${node}
+    done
+
+    if [ $OSVERSION -ge $OSOCATA ]; then
+	su -s /bin/sh -c "nova-manage cell_v2 discover_hosts --verbose" nova
+	crudini --set /etc/nova/nova.conf scheduler discover_hosts_in_cells_interval 300
+    fi
+
+    echo "NOVA_COMPUTENODES_DONE=\"${NOVA_COMPUTENODES_DONE}\"" >> $SETTINGS
+    logtend "nova-computenodes"
 fi
 
 #
