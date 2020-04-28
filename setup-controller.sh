@@ -1416,6 +1416,7 @@ fi
 #
 if [ -z "${ZUN_DBPASS}" ]; then
     logtstart "zun"
+    cdir=`pwd`
     ZUN_DBPASS=`$PSWDGEN`
     ZUN_PASS=`$PSWDGEN`
 
@@ -1591,6 +1592,7 @@ EOF
 	openstack user create --domain default --password $KURYR_PASS kuryr
 	openstack role add --project service --user kuryr admin
 
+	cd $cdir
 	echo "ZUN_DBPASS=\"${ZUN_DBPASS}\"" >> $SETTINGS
 	echo "ZUN_PASS=\"${ZUN_PASS}\"" >> $SETTINGS
 	echo "KURYR_PASS=\"${KURYR_PASS}\"" >> $SETTINGS

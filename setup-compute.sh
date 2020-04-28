@@ -389,8 +389,8 @@ service_enable libvirt-bin
 #
 
 # Install Docker
-curl -fsSL https://get.docker.com -o $DIRNAME/get-docker.sh
-sh $DIRNAME/get-docker.sh
+curl -fsSL https://get.docker.com -o $OURDIR/get-docker.sh
+sh $OURDIR/get-docker.sh
 
 # Creating kuryr user
 groupadd --system kuryr
